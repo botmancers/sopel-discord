@@ -16,7 +16,7 @@ from sopel import formatting
 from sopel.config.types import (
     StaticSection, ValidatedAttribute, BaseValidated, NO_DEFAULT
 )
-from sopel.tools import get_input
+from sopel.tools import (get_input, get_logger)
 
 import discord
 
@@ -28,24 +28,29 @@ DISCORD_API_VERSION = 6
 DISCORD_API_URL = f'https://discord.com/api/v{DISCORD_API_VERSION}'
 
 client = discord.Client()
+logger = get_logger(__name__)
 
-
-valid_message_pattern = r'^(?![.!?]\s*\w+)'
+valid_message_pattern = r'^(?![!?]\s*\w+)'
 
 
 @client.event
 async def on_ready():
-    print('Logged into Discord as')
-    print(client.user.name)
-    print(client.user.id)
-    print('----')
+    logger.info(f"[discord] logged in as {client.user.name}, id: {client.user.id}")
+    logger.debug(f"[discord] {client.user}")
 
 
 @client.event
 async def on_message(message):
     content = message.clean_content
-    if message.channel.id in client.channel_mappings \
-            and not message.author.bot \
+    logger.debug(f"[discord] <{message.author.name}> {content}")
+    logger.debug(f"[discord-msg] {message}")
+    # the messages we relay are for some reason caught here, but we can
+    # filter them because the author id for those messages will be the
+    # same as the webhook id we're using to send (NOT our client.user.id)
+    # of course hook id is a fucking string while message.author.id is an int
+    hook = client.irc_bot.memory['webhooks'].get(message.channel.id, {})
+    if hook and message.channel.id in client.channel_mappings \
+            and message.author.id != int(hook['id']) \
             and re.match(valid_message_pattern, content):
         irc_channel = client.channel_mappings[message.channel.id]
         content = re.sub(r'<(:\w+:)\d+>', r'\1', content)
@@ -214,6 +219,7 @@ def irc_message(bot, trigger):
                 'username': '{} (IRC)'.format(trigger.nick),
             }
             try:
+                logger.debug(f"webhook id {hook['id']}")
                 r = requests.post('{}/webhooks/{}/{}'.format(
                         DISCORD_API_URL, hook['id'], hook['token']
                     ),
